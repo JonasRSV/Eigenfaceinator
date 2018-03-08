@@ -141,10 +141,12 @@ class Eigenclassifier(object):
         """Calculate expected face value."""
         face = face - self.mean_face
 
-        base_projection = zeros(face.shape)
-        for base_vector in self.eigen_base:
-            base_projection = base_projection +\
-                (base_vector @ face) * base_vector
+        base_projection = zeros(self.base_dim)
+        for index, base_vector in enumerate(self.eigen_base):
+            vector = zeros(self.base_dim)
+            vector[index] = base_vector @ face
+
+            base_projection = base_projection + vector
 
         """
         Now something has to be done with the projection
