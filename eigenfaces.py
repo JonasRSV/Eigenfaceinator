@@ -1,22 +1,28 @@
 import sys
 from random import choice
-from numpy import array, mean, zeros, sum, fromstring, full, vectorize, argsort
+from numpy import array, mean, zeros, sum, fromstring, full, vectorize, argsort, sqrt
 from numpy.linalg import eig, norm
 from pandas import read_csv
 from matplotlib import pyplot as plt
 from time import time
 
 
-def get_training_and_test_data():
+def get_training_test_and_real_test_data():
     """Read and reformat traning data."""
     data = read_csv("training.csv", sep=',', header='infer')
+    test = read_csv("test.csv", sep=",", header="infer")
 
     images = zeros((7049, 9216))
+    test_images = zeros((1783, 9216))
     for index, img in enumerate(data["Image"]):
         images[index] = fromstring(img, dtype=int, sep=" ")
 
-    return (choose_training_images(images),
-            choose_training_images(images, cardinality=100))
+    for index, img in enumerate(test["Image"]):
+        test_images[index] = fromstring(img, dtype=int, sep=" ")
+
+    return (choose_images(images),
+            choose_images(images, cardinality=100),
+            choose_images(test_images, cardinality=500))
 
 
 def dimensionality_reduction(matrix, reduction_filter=full((3, 3), 1 / 9),
@@ -45,7 +51,7 @@ def dimensionality_reduction(matrix, reduction_filter=full((3, 3), 1 / 9),
     return dim_reduction.flatten()
 
 
-def choose_training_images(images, cardinality=500):
+def choose_images(images, cardinality=500):
     """
     Choose a random number of images.
 
@@ -77,43 +83,71 @@ def vector_to_image(vector, image_shape):
 class Eigenclassifier(object):
     """Classifier scope."""
 
-    def __init__(self, base_dim=5, threshold=lambda x: x, verbose=True):
+    def __init__(self, base_dim=5, verbose=True, orthogonalize=False, allowed_feature_failures=0):
         """Constructor."""
         self.base_dim = base_dim
-        self.threshold = threshold
-        self.eigen_base = None
+        self.eigen_base_ld = None
+        self.eigen_base_hd = None
         self.mean_face = None
         self.covariance = None
         self.expected_values = None
         self.verbose = verbose
+        self.orthogonalize = orthogonalize
+        self.allowed_feature_failures = allowed_feature_failures
+
+        """Used in classification."""
+        self.face_space = None
+
+    def displayable_vector(self, vector):
+        """Shapes vector into displayable format."""
+        mn = min(vector)
+        mx = max(vector)
+
+        stabiliser = mx + abs(mn)
+
+        avoid_zero_division = stabiliser if stabiliser != 0 else 1
+
+        vector = vector + abs(mn)
+        return vector * (256 / avoid_zero_division)
+
+    def project_on_space(self, vector):
+        """Project the vector onto the space.
+
+        Calculate expected face value
+        """
+        vector = vector - self.mean_face
+
+        """
+        Project the face onto the new base by summation of
+        projection onto each of the base vectors
+        """
+        base_projection = zeros(self.base_dim)
+        for index, base_vector in enumerate(self.eigen_base_hd):
+            axis = zeros(self.base_dim)
+            axis[index] = vector @ base_vector
+
+            base_projection = base_projection + axis
+
+        return base_projection
 
     def show_principal_component(self, shape=(32, 32)):
         """Show the eigen face of the principal component."""
-        if self.eigen_base is None:
+        if self.eigen_base_hd is None:
             sys.stderr.write(
                 "Must build base before trying to show the classifier")
             sys.exit(1)
 
         fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4)
 
-        principal_component_0 = self.eigen_base[0]
-        principal_component_1 = self.eigen_base[1]
-        principal_component_2 = self.eigen_base[2]
-        principal_component_3 = self.eigen_base[3]
+        principal_component_0 = self.displayable_vector(self.eigen_base_hd[0])
+        principal_component_1 = self.displayable_vector(self.eigen_base_hd[1])
+        principal_component_2 = self.displayable_vector(self.eigen_base_hd[2])
+        principal_component_3 = self.displayable_vector(self.eigen_base_hd[3])
 
-        project_into_origin_space =\
-            lambda eigen: self.expected_values.T @ eigen\
-            + self.mean_face
-
-        pc_project_0 = project_into_origin_space(principal_component_0)
-        pc_project_1 = project_into_origin_space(principal_component_1)
-        pc_project_2 = project_into_origin_space(principal_component_2)
-        pc_project_3 = project_into_origin_space(principal_component_3)
-
-        ax1.imshow(vector_to_image(pc_project_0, shape))
-        ax2.imshow(vector_to_image(pc_project_1, shape))
-        ax3.imshow(vector_to_image(pc_project_2, shape))
-        ax4.imshow(vector_to_image(pc_project_3, shape))
+        ax1.imshow(vector_to_image(principal_component_0, shape))
+        ax2.imshow(vector_to_image(principal_component_1, shape))
+        ax3.imshow(vector_to_image(principal_component_2, shape))
+        ax4.imshow(vector_to_image(principal_component_3, shape))
 
         plt.tight_layout()
         plt.show()
@@ -126,18 +160,26 @@ class Eigenclassifier(object):
         to be the mean image, this covariance is calculated
         in the following way:
 
-        cov(X, Y) = (X - M)(Y - M)
+        cov(X, Y) = (X - Mv)(Y - Mv)
 
-        where M is the mean vector
+        where Mv is the mean vector
+
+        M = number of samples
+        N^2 = flattened image
         """
         time_stamp_prebuild = time()
         self.mean_face = mean(training_data, axis=0)
 
         """ This broadcasts the mean_vector through the matrix """
         self.expected_values = training_data - self.mean_face
+
+        (M, NN) = self.expected_values.shape
+
+        """
+        Calculate the covariance matrix as an M X M matrix
+        """
         self.covariance = self.expected_values @ self.expected_values.T
 
-        (_, y_dim) = self.covariance.shape
         (scalars, vectors) = eig(self.covariance)
 
         if len(scalars) < self.base_dim:
@@ -147,9 +189,39 @@ class Eigenclassifier(object):
 
             sys.exit(1)
 
+        """
+        stripps the vectors of the imaginary part
+        the imaginary part should be insignificant
+        otherwise something has been done wrong
+        """
         im_stripper = vectorize(lambda x: x.real)
+
+        """
+        projects the vector into the image space
+        because the eigen values is calculated from
+        the M x M matrix rather than the N^2 * N^2
+        matrix where M = number of samples and N^2
+        is the flattened image vector. To be able
+        to project a new vector onto the image space
+        we have to project the eigen vectors back
+        into image space. The reason for doing this
+        is becaused of the assumption that M << N^2
+        making it easier to calculate eigenvectors for
+        M rather than N^2
+        """
+
+        def project_into_image_space(vector):
+            image_space = self.expected_values.T @ vector
+            return image_space / norm(image_space)
+
+        """
+        Gets the index of the #base_dim number of largest
+        eigen scalars
+        """
         max_eig_index = argsort(scalars)[-self.base_dim:]
-        self.eigen_base = zeros((self.base_dim, y_dim))
+
+        self.eigen_base_ld = zeros((self.base_dim, M))
+        self.eigen_base_hd = zeros((self.base_dim, NN))
         for index, eigen in enumerate(max_eig_index):
             scalar = scalars[eigen]
             vector = vectors[eigen]
@@ -163,13 +235,29 @@ class Eigenclassifier(object):
                 sys.exit(1)
 
             im_stripped = im_stripper(vector)
-            self.eigen_base[index] = im_stripped / norm(im_stripped)
+            self.eigen_base_ld[index] = im_stripped / norm(im_stripped)
+            self.eigen_base_hd[index] =\
+                project_into_image_space(self.eigen_base_ld[index])
 
-        """
-        Perhaps there's something to gain by orthonormalizing
-        the base? To do that apply repeated projection and subtraction
-        i might implement it later if noone else does.
-        """
+
+        if self.orthogonalize:
+            for i in range(self.base_dim):
+                for j in range(i + 1, self.base_dim):
+                    self.eigen_base_hd[i] =\
+                        self.eigen_base_hd[i] -\
+                        self.eigen_base_hd[j] @ self.eigen_base_hd[i]\
+                        * self.eigen_base_hd[j]
+
+                    self.eigen_base_ld[i] =\
+                        self.eigen_base_ld[i] -\
+                        self.eigen_base_ld[j] @ self.eigen_base_ld[i]\
+                        * self.eigen_base_ld[j]
+
+                    self.eigen_base_hd[i] = self.eigen_base_hd[i]\
+                        / norm(self.eigen_base_hd[i])
+
+                    self.eigen_base_ld[i] = self.eigen_base_ld[i]\
+                        / norm(self.eigen_base_ld[i])
 
         if self.verbose:
             print(
@@ -177,7 +265,33 @@ class Eigenclassifier(object):
                     time() - time_stamp_prebuild
                 ))
 
-        return self.eigen_base
+        return self.eigen_base_hd
+
+    def define_face_space(self, faces):
+        """
+        Define face space within the eigenbase of faces.
+
+        It's recommended that the facespace is defined
+        using the faces for building the base but this
+        function will allow using different faces.
+        Why? For Science!
+        """
+        if self.eigen_base_hd is None:
+            print("Build base before space dummy")
+
+            sys.exit(0)
+
+        """
+        face_space is limited by a max and min value
+        of each axis.
+        """
+        self.face_space = zeros((2, self.base_dim))
+        for face in faces:
+            for axis, value in enumerate(self.project_on_space(face)):
+                self.face_space[0][axis] = max(value, self.face_space[0][axis])
+                self.face_space[1][axis] = min(value, self.face_space[1][axis])
+
+        return self.face_space
 
     def predict(self, face):
         """
@@ -186,45 +300,36 @@ class Eigenclassifier(object):
         The face is assumed to already be reshaped
         into the shape that were used for traning.
         """
-        if self.eigen_base is None:
-            print("Build base before prediction dummy")
+        if self.face_space is None:
+            print("Build face space before prediction")
 
             sys.exit(0)
 
-        """Calculate expected face value."""
-        face = face - self.mean_face
+        feature_failures = 0
+        for axis, value in enumerate(self.project_on_space(face)):
+            if (self.face_space[0][axis] >= value >= self.face_space[1][axis]):
+                continue
 
-        base_projection = zeros(self.base_dim)
-        for index, base_vector in enumerate(self.eigen_base):
-            vector = zeros(self.base_dim)
-            vector[index] = base_vector @ face
+            if self.allowed_feature_failures == feature_failures:
+                return (False, axis)
 
-            base_projection = base_projection + vector
+            feature_failures += 1
 
-        """
-        Now something has to be done with the projection
-        ...
-        """
-
-        return base_projection
+        return (True, None)
 
 
-time_stamp_pre_datafetch = time()
-(training_data, test_data) = get_training_and_test_data()
-print("took {} seconds to read data".format(time() - time_stamp_pre_datafetch))
+if __name__ == "__main__":
 
+    time_stamp_pre_datafetch = time()
 
+    (training_data, test_data, super_test_data) =\
+        get_training_test_and_real_test_data()
 
-classifier = Eigenclassifier()
-base = classifier.build_base(training_data)
-classifier.show_principal_component()
+    print("took {} seconds to read data"
+          .format(time() - time_stamp_pre_datafetch))
 
-
-
-
-# print(images[0])
-# print(len(images[0]))
-# print(array(data[0])[0])
-# print("HI")
-# print(classifier.build_base(data))
+    classifier = Eigenclassifier(base_dim=4, orthogonalize=True)
+    classifier.build_base(training_data)
+    classifier.define_face_space(training_data)
+    classifier.show_principal_component()
 
