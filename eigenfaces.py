@@ -6,6 +6,9 @@ from pandas import read_csv
 from matplotlib import pyplot as plt
 from time import time
 
+"""True intmax does not exists in python3 but this'll do."""
+INT_MAX = 1000000000
+
 
 def get_training_test_and_real_test_data():
     """Read and reformat traning data."""
@@ -83,7 +86,7 @@ def vector_to_image(vector, image_shape):
 class Eigenclassifier(object):
     """Classifier scope."""
 
-    def __init__(self, base_dim=5, verbose=True, orthogonalize=False, allowed_feature_failures=0):
+    def __init__(self, base_dim=5, verbose=True, orthogonalize=False):
         """Constructor."""
         self.base_dim = base_dim
         self.eigen_base_ld = None
@@ -93,10 +96,10 @@ class Eigenclassifier(object):
         self.expected_values = None
         self.verbose = verbose
         self.orthogonalize = orthogonalize
-        self.allowed_feature_failures = allowed_feature_failures
 
         """Used in classification."""
         self.face_space = None
+        self.maximal_allowed_distance = 0
 
     def displayable_vector(self, vector):
         """Shapes vector into displayable format."""
@@ -129,6 +132,10 @@ class Eigenclassifier(object):
             base_projection = base_projection + axis
 
         return base_projection
+
+    def euclidian_distance(self, v1, v2):
+        """Calculate the euclidian distance of two vectors."""
+        return sqrt(sum((v1 - v2) * (v1 - v2)))
 
     def show_principal_component(self, shape=(32, 32)):
         """Show the eigen face of the principal component."""
@@ -267,33 +274,56 @@ class Eigenclassifier(object):
 
         return self.eigen_base_hd
 
-    def define_face_space(self, faces):
+    def get_min_distance_to_faces(self, faces, training_faces):
         """
         Define face space within the eigenbase of faces.
 
-        It's recommended that the facespace is defined
-        using the faces for building the base but this
-        function will allow using different faces.
-        Why? For Science!
+        It's recommended that the faces used is the faces
+        that were used for building the base, but for science
+        this functions allowes that to be changed to observe results!
         """
         if self.eigen_base_hd is None:
             print("Build base before space dummy")
 
             sys.exit(0)
 
-        """
-        face_space is limited by a max and min value
-        of each axis.
-        """
-        self.face_space = zeros((2, self.base_dim))
-        for face in faces:
-            for axis, value in enumerate(self.project_on_space(face)):
-                self.face_space[0][axis] = max(value, self.face_space[0][axis])
-                self.face_space[1][axis] = min(value, self.face_space[1][axis])
+        """Reset maximal_allowed distance."""
+        self.maximal_allowed_distance = 0
 
-        return self.face_space
+        """
+        Face space is defined as a minimal distance
+        to some particular face in faces projected
+        onto the eigenface_base
 
-    def predict(self, face):
+        Projects all faces onto the face space.
+        """
+        self.face_space = zeros((len(faces), self.base_dim))
+        for index, face in enumerate(faces):
+            self.face_space[index] = self.project_on_space(face)
+
+        """Project all training faces onto face space."""
+        _training_faces = zeros((len(training_faces), self.base_dim))
+        for index, face in enumerate(training_faces):
+            _training_faces[index] = self.project_on_space(face)
+
+        """
+        Calculates the minimum allowed distance to a
+        nearest face so that all the faces in the training_faces
+        is classified as a face.
+        """
+        for training_face in _training_faces:
+            minimal_distance_to_a_face = INT_MAX
+            for face in self.face_space:
+                minimal_distance_to_a_face =\
+                    min(minimal_distance_to_a_face,
+                        self.euclidian_distance(training_face, face))
+
+            self.maximal_allowed_distance =\
+                max(self.maximal_allowed_distance, minimal_distance_to_a_face)
+
+        return self.maximal_allowed_distance
+
+    def predict(self, image):
         """
         Predict on new face.
 
@@ -305,31 +335,32 @@ class Eigenclassifier(object):
 
             sys.exit(0)
 
-        feature_failures = 0
-        for axis, value in enumerate(self.project_on_space(face)):
-            if (self.face_space[0][axis] >= value >= self.face_space[1][axis]):
-                continue
+        """Project the image onto the face space"""
+        _i_in_facespace = self.project_on_space(image)
 
-            if self.allowed_feature_failures == feature_failures:
-                return (False, axis)
+        min_distance_to_face = INT_MAX
+        for face in self.face_space:
+            min_distance_to_face =\
+                min(min_distance_to_face,
+                    self.euclidian_distance(face, _i_in_facespace))
 
-            feature_failures += 1
-
-        return (True, None)
+        return (True, min_distance_to_face) if\
+            min_distance_to_face <= self.maximal_allowed_distance else\
+            (False, min_distance_to_face)
 
 
 if __name__ == "__main__":
 
     time_stamp_pre_datafetch = time()
 
-    (training_data, test_data, super_test_data) =\
+    (base_data, training_data, test_data) =\
         get_training_test_and_real_test_data()
 
     print("took {} seconds to read data"
           .format(time() - time_stamp_pre_datafetch))
 
     classifier = Eigenclassifier(base_dim=4, orthogonalize=True)
-    classifier.build_base(training_data)
-    classifier.define_face_space(training_data)
+    classifier.build_base(base_data)
+    classifier.get_min_distance_to_faces(base_data, training_data)
     classifier.show_principal_component()
 
