@@ -7,17 +7,16 @@ from matplotlib import pyplot as plt
 from time import time
 
 """True intmax does not exists in python3 but this'll do."""
-INT_MAX = 1000000000
+INT_MAX = 100000000000000
 
 
 class Eigenclassifier(object):
     """Classifier scope."""
 
-    def __init__(self, base_dim=5, verbose=True, orthogonalize=False):
+    def __init__(self, base_dim=20, verbose=True, orthogonalize=False):
         """Constructor."""
         self.base_dim = base_dim
-        self.eigen_base_ld = None
-        self.eigen_base_hd = None
+        self.eigen_base = None
         self.mean_face = None
         self.covariance = None
         self.expected_values = None
@@ -35,7 +34,7 @@ class Eigenclassifier(object):
     def project_on_space(self, vector):
         """Project the vector onto the space."""
         base_projection = zeros(self.base_dim)
-        for index, base_vector in enumerate(self.eigen_base_hd):
+        for index, base_vector in enumerate(self.eigen_base):
             axis = zeros(self.base_dim)
             axis[index] = vector @ base_vector
 
@@ -49,17 +48,21 @@ class Eigenclassifier(object):
 
     def show_principal_component(self, shape=(32, 32)):
         """Show the eigen face of the principal component."""
-        if self.eigen_base_hd is None:
+        if self.eigen_base is None:
             sys.stderr.write(
                 "Must build base before trying to show the classifier")
             sys.exit(1)
 
         fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4)
 
-        principal_component_0 = image.normalize_vector_image(self.eigen_base_hd[0])
-        principal_component_1 = image.normalize_vector_image(self.eigen_base_hd[1])
-        principal_component_2 = image.normalize_vector_image(self.eigen_base_hd[2])
-        principal_component_3 = image.normalize_vector_image(self.eigen_base_hd[3])
+        principal_component_0 =\
+            image.normalize_vector_image(self.covariance @ self.eigen_base[0])
+        principal_component_1 =\
+            image.normalize_vector_image(self.covariance @ self.eigen_base[1])
+        principal_component_2 =\
+            image.normalize_vector_image(self.covariance @ self.eigen_base[2])
+        principal_component_3 =\
+            image.normalize_vector_image(self.covariance @ self.eigen_base[3])
 
         ax1.imshow(image.vector_to_image(principal_component_0, shape))
         ax2.imshow(image.vector_to_image(principal_component_1, shape))
@@ -77,12 +80,9 @@ class Eigenclassifier(object):
         """ This broadcasts the mean_vector through the matrix """
         self.expected_values = training_data - self.mean_face
 
-        (M, NN) = self.expected_values.shape
+        (_, NN) = self.expected_values.shape
 
-        """
-        Calculate the covariance matrix as an M X M matrix
-        """
-        self.covariance = self.expected_values @ self.expected_values.T
+        self.covariance = self.expected_values.T @ self.expected_values
 
         (scalars, vectors) = eig(self.covariance)
 
@@ -96,54 +96,33 @@ class Eigenclassifier(object):
         """stripps the vectors of the imaginary part"""
         im_stripper = vectorize(lambda x: x.real)
 
-        def project_into_image_space(vector):
-            image_space = self.expected_values.T @ vector
-            return image_space / norm(image_space)
-
         """
         Gets the index of the #base_dim number of largest
         eigen scalars
         """
         max_eig_index = argsort(scalars)[-self.base_dim:]
-
-        self.eigen_base_ld = zeros((self.base_dim, M))
-        self.eigen_base_hd = zeros((self.base_dim, NN))
+        self.eigen_base = zeros((self.base_dim, NN))
         for index, eigen in enumerate(max_eig_index):
             scalar = scalars[eigen]
             vector = vectors[eigen]
 
             if abs(scalar.imag) > 0.00001:
-                print("You've done goofed, yer eigen values "
-                      + "have huuuge imaginary parts, they're this: "
-                      + str(scalar) + " Huuuge, go rethink your life "
-                      + "choices")
-
+                print("To big imag parts")
                 sys.exit(1)
 
             im_stripped = im_stripper(vector)
-            self.eigen_base_ld[index] = im_stripped / norm(im_stripped)
-            self.eigen_base_hd[index] =\
-                project_into_image_space(self.eigen_base_ld[index])
-
+            self.eigen_base[index] = im_stripped / norm(im_stripped)
 
         if self.orthogonalize:
             for i in range(self.base_dim):
                 for j in range(i + 1, self.base_dim):
-                    self.eigen_base_hd[i] =\
-                        self.eigen_base_hd[i] -\
-                        self.eigen_base_hd[j] @ self.eigen_base_hd[i]\
-                        * self.eigen_base_hd[j]
+                    self.eigen_base[i] =\
+                        self.eigen_base[i] -\
+                        self.eigen_base[j] @ self.eigen_base[i]\
+                        * self.eigen_base[j]
 
-                    self.eigen_base_ld[i] =\
-                        self.eigen_base_ld[i] -\
-                        self.eigen_base_ld[j] @ self.eigen_base_ld[i]\
-                        * self.eigen_base_ld[j]
-
-                    self.eigen_base_hd[i] = self.eigen_base_hd[i]\
-                        / norm(self.eigen_base_hd[i])
-
-                    self.eigen_base_ld[i] = self.eigen_base_ld[i]\
-                        / norm(self.eigen_base_ld[i])
+                    self.eigen_base[i] = self.eigen_base[i]\
+                        / norm(self.eigen_base[i])
 
         if self.verbose:
             print(
@@ -151,22 +130,23 @@ class Eigenclassifier(object):
                     time() - time_stamp_prebuild
                 ))
 
-        return self.eigen_base_hd
+        return self.eigen_base
 
-    def set_allowed_distance(self, faces, training_faces):
+    def train(self, faces, training_faces, calc_variance=True):
         """Find minimal distance for each training face to a face."""
-        if self.eigen_base_hd is None:
+        if self.eigen_base is None:
             print("Build base before space dummy")
 
             sys.exit(0)
 
+        pre_train = time()
         """Reset maximal_allowed distance."""
         self.maximal_allowed_distance = 0
         self.faces = faces
         self.training_faces = training_faces
-        faces = faces
-        training_faces = training_faces - self.mean_face
 
+        faces = faces - self.mean_face
+        training_faces = training_faces - self.mean_face
 
         self.face_space = zeros((len(faces), self.base_dim))
         for index, face in enumerate(faces):
@@ -185,6 +165,7 @@ class Eigenclassifier(object):
 
         total_distance = 0
         most_distant_faces = 0
+        distances = []
         mdf1 = None
         mdf2 = None
         for it, training_face in enumerate(_training_faces):
@@ -202,6 +183,7 @@ class Eigenclassifier(object):
                     closest_face = minimal_distance_to_a_face
                     cf = self.faces[ir]
 
+            distances.append(minimal_distance_to_a_face)
             total_distance += minimal_distance_to_a_face
             self.maximal_allowed_distance =\
                 max(self.maximal_allowed_distance, minimal_distance_to_a_face)
@@ -212,8 +194,10 @@ class Eigenclassifier(object):
                 mdf2 = cf
 
         mean_distance = total_distance / len(self.training_faces)
+        print("Max distance {}".format(self.maximal_allowed_distance))
+        print("Mean Distance {}".format(mean_distance))
+        print("time to train {}".format(time() - pre_train))
 
-        self.maximal_allowed_distance = mean_distance
         return mean_distance, mdf1, mdf2
 
     def predict(self, image):
@@ -253,13 +237,13 @@ if __name__ == "__main__":
 
     pre_fetch = time()
 
-    (base_data, training_data, test_data) = data.get_data()
+    (bdata, trdata, tedata) = data.get_data()
 
     print("took {} seconds to read data"
           .format(time() - pre_fetch))
 
-    classifier = Eigenclassifier(base_dim=4, orthogonalize=True)
-    classifier.build_base(base_data)
-    classifier.set_allowed_distance(base_data, training_data)
+    classifier = Eigenclassifier(base_dim=5, orthogonalize=True)
+    classifier.build_base(bdata)
+    classifier.train(bdata, trdata)
     classifier.show_principal_component()
 

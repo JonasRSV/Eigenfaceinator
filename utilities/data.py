@@ -18,7 +18,7 @@ def get_data():
         test_images[index] = fromstring(img, dtype=int, sep=" ")
 
     return (choose_images(images, cardinality=2000),
-            choose_images(images, cardinality=100),
+            choose_images(images, cardinality=3000),
             choose_images(test_images, cardinality=500))
 
 
