@@ -69,13 +69,16 @@ def vector_to_renderable(vector, shape):
 def grey_scale(image,
                wpixel=lambda x: x[0] * 0.25 + x[1] * 0.5 + x[2] * 0.25):
     """Reduce image channels from 3 to 1."""
-    (x, y, _) = image.shape
-    grey = zeros((x, y))
-    for col in range(x):
-        for row in range(y):
-            grey[col][row] = wpixel(image[col][row])
+    if len(image.shape) == 2:
+        return image
+    else:
+        (x, y, _) = image.shape
+        grey = zeros((x, y))
+        for col in range(x):
+            for row in range(y):
+                grey[col][row] = wpixel(image[col][row])
 
-    return grey
+        return grey
 
 
 def load_image(name):
@@ -83,7 +86,7 @@ def load_image(name):
     img = Image.open(name)
     img.load()
 
-    return asarray(img, dtype="int32")
+    return asarray(img, dtype="B")
 
 
 def get_classifiable_image(name):

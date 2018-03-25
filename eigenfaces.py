@@ -26,15 +26,14 @@ class Eigenclassifier(object):
 
         """Used in classification."""
         self.face_space = None
-        self.faces = None
         self.maximal_allowed_distance = 0
 
-    def project_on_space(self, vector):
-        """Project the vector onto the space.
+        """Used to print pretty images."""
+        self.faces = None
+        self.training_faces = None
 
-        Project the face onto the new base by summation of
-        projection onto each of the base vectors
-        """
+    def project_on_space(self, vector):
+        """Project the vector onto the space."""
         base_projection = zeros(self.base_dim)
         for index, base_vector in enumerate(self.eigen_base_hd):
             axis = zeros(self.base_dim)
@@ -71,20 +70,7 @@ class Eigenclassifier(object):
         plt.show()
 
     def build_base(self, training_data):
-        """
-        Build the eigen base.
-
-        Expected value of any image will be assumed
-        to be the mean image, this covariance is calculated
-        in the following way:
-
-        cov(X, Y) = (X - Mv)(Y - Mv)
-
-        where Mv is the mean vector
-
-        M = number of samples
-        N^2 = flattened image
-        """
+        """Build the eigen base."""
         time_stamp_prebuild = time()
         self.mean_face = mean(training_data, axis=0)
 
@@ -107,26 +93,8 @@ class Eigenclassifier(object):
 
             sys.exit(1)
 
-        """
-        stripps the vectors of the imaginary part
-        the imaginary part should be insignificant
-        otherwise something has been done wrong
-        """
+        """stripps the vectors of the imaginary part"""
         im_stripper = vectorize(lambda x: x.real)
-
-        """
-        projects the vector into the image space
-        because the eigen values is calculated from
-        the M x M matrix rather than the N^2 * N^2
-        matrix where M = number of samples and N^2
-        is the flattened image vector. To be able
-        to project a new vector onto the image space
-        we have to project the eigen vectors back
-        into image space. The reason for doing this
-        is becaused of the assumption that M << N^2
-        making it easier to calculate eigenvectors for
-        M rather than N^2
-        """
 
         def project_into_image_space(vector):
             image_space = self.expected_values.T @ vector
@@ -186,13 +154,7 @@ class Eigenclassifier(object):
         return self.eigen_base_hd
 
     def set_allowed_distance(self, faces, training_faces):
-        """
-        Define face space within the eigenbase of faces.
-
-        It's recommended that the faces used is the faces
-        that were used for building the base, but for science
-        this functions allowes that to be changed to observe results!
-        """
+        """Find minimal distance for each training face to a face."""
         if self.eigen_base_hd is None:
             print("Build base before space dummy")
 
@@ -200,18 +162,12 @@ class Eigenclassifier(object):
 
         """Reset maximal_allowed distance."""
         self.maximal_allowed_distance = 0
-        # faces = faces - self.mean_face
-        # training_faces = training_faces - self.mean_face
-
-
-        """
-        Face space is defined as a minimal distance
-        to some particular face in faces projected
-        onto the eigenface_base
-
-        Projects all faces onto the face space.
-        """
         self.faces = faces
+        self.training_faces = training_faces
+        faces = faces
+        training_faces = training_faces - self.mean_face
+
+
         self.face_space = zeros((len(faces), self.base_dim))
         for index, face in enumerate(faces):
             self.face_space[index] = self.project_on_space(face)
@@ -227,6 +183,7 @@ class Eigenclassifier(object):
         is classified as a face.
         """
 
+        total_distance = 0
         most_distant_faces = 0
         mdf1 = None
         mdf2 = None
@@ -245,15 +202,19 @@ class Eigenclassifier(object):
                     closest_face = minimal_distance_to_a_face
                     cf = self.faces[ir]
 
+            total_distance += minimal_distance_to_a_face
             self.maximal_allowed_distance =\
                 max(self.maximal_allowed_distance, minimal_distance_to_a_face)
 
             if most_distant_faces < self.maximal_allowed_distance:
                 most_distant_faces = self.maximal_allowed_distance
-                mdf1 = training_faces[it]
+                mdf1 = self.training_faces[it]
                 mdf2 = cf
 
-        return self.maximal_allowed_distance, mdf1, mdf2
+        mean_distance = total_distance / len(self.training_faces)
+
+        self.maximal_allowed_distance = mean_distance
+        return mean_distance, mdf1, mdf2
 
     def predict(self, image):
         """
@@ -268,7 +229,7 @@ class Eigenclassifier(object):
             sys.exit(0)
 
         """Project the image onto the face space"""
-        # image = image - self.mean_face
+        image = image - self.mean_face
         _i_in_facespace = self.project_on_space(image)
 
         closest_face = None

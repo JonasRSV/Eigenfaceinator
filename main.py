@@ -14,45 +14,34 @@ pre_fetch = time()
 print("took {} seconds to read data"
       .format(time() - pre_fetch))
 
-classifier = Eigenclassifier(base_dim=40, orthogonalize=True)
+classifier = Eigenclassifier(base_dim=200)
 classifier.build_base(base_data)
 md, f, t = classifier.set_allowed_distance(base_data, training_data)
 
-fig, (ax1, ax2) = subplots(1, 2)
-
-print(md)
-ax1.imshow(vector_to_image(f, (32, 32)))
-ax2.imshow(vector_to_image(t, (32, 32)))
-show()
+# fig, (ax1, ax2) = subplots(1, 2)
+# ax1.imshow(vector_to_image(f, (32, 32)))
+# ax2.imshow(vector_to_image(t, (32, 32)))
+# show()
 
 """Find Faces in Image."""
-classifiable, original = get_classifiable_image("avengers.jpg")
-fig, (ax1, ax2, ax3) = subplots(1, 3)
+classifiable, original = get_classifiable_image("cbeatles.jpg")
+fig, (ax1) = subplots(1, 1)
 
+ax1.imshow(original)
 
+print("Distance in face-space for faces {}".format(md))
+pre_slide = time()
+windows = slide(classifiable, (50, 50), stride=20)
+print("took {} seconds to slide through all windows for size {}"
+      .format(time() - pre_slide, 50))
 
-for dim in range(32, 60):
-    windows = slide(classifiable, (dim, dim), stride=50)
+pre_classification = time()
+positives, negatives = classify_windows(classifier, windows)
+print("took {} seconds to classify the windows"
+      .format(time() - pre_classification))
 
-    ax1.imshow(vector_to_image(windows[0].data, windows[0].shape))
-    ax2.imshow(vector_to_image(windows[0].get_classifiable(), (32, 32)))
-    p, d, face = classifier.predict(windows[0].get_classifiable())
-
-    ax3.imshow(vector_to_image(face, (32, 32)))
-
-    print(p)
-    print(d)
-
-
-    break
-
-
-
-    print("Slided through windows once")
-    positives, negatives = classify_windows(classifier, windows)
-
-    print("Nof positives {}, nOf negatives {}".format(len(positives), len(negatives)))
-
+for window in positives:
+    window.add_rectangle_to_image(ax1)
 
 show()
 

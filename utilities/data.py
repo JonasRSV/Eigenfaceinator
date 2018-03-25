@@ -17,7 +17,7 @@ def get_data():
     for index, img in enumerate(test["Image"]):
         test_images[index] = fromstring(img, dtype=int, sep=" ")
 
-    return (choose_images(images),
+    return (choose_images(images, cardinality=2000),
             choose_images(images, cardinality=100),
             choose_images(test_images, cardinality=500))
 
