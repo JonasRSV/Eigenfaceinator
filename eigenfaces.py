@@ -1,86 +1,13 @@
 import sys
-from random import choice
-from numpy import array, mean, zeros, sum, fromstring, full, vectorize, argsort, sqrt
+from utilities import data
+from utilities import image
+from numpy import array, mean, zeros, sum, vectorize, argsort, sqrt
 from numpy.linalg import eig, norm
-from pandas import read_csv
 from matplotlib import pyplot as plt
 from time import time
 
 """True intmax does not exists in python3 but this'll do."""
 INT_MAX = 1000000000
-
-
-def get_training_test_and_real_test_data():
-    """Read and reformat traning data."""
-    data = read_csv("training.csv", sep=',', header='infer')
-    test = read_csv("test.csv", sep=",", header="infer")
-
-    images = zeros((7049, 9216))
-    test_images = zeros((1783, 9216))
-    for index, img in enumerate(data["Image"]):
-        images[index] = fromstring(img, dtype=int, sep=" ")
-
-    for index, img in enumerate(test["Image"]):
-        test_images[index] = fromstring(img, dtype=int, sep=" ")
-
-    return (choose_images(images),
-            choose_images(images, cardinality=100),
-            choose_images(test_images, cardinality=500))
-
-
-def dimensionality_reduction(matrix, reduction_filter=full((3, 3), 1 / 9),
-                             image_shape=(96, 96)):
-    """Reduce dimension of a image."""
-    matrix = matrix.reshape(image_shape)
-    (x_dim, y_dim) = reduction_filter.shape
-    (mx_dim, my_dim) = matrix.shape
-
-    x_new = int(mx_dim / x_dim)
-    y_new = int(my_dim / y_dim)
-
-    dim_reduction = zeros((x_new, y_new))
-    for x in range(x_new):
-        for y in range(y_new):
-
-            x_from = x * x_dim
-            x_to = x_from + x_dim
-
-            y_from = y * y_dim
-            y_to = y_from + y_dim
-
-            dim_reduction[x, y] =\
-                sum(reduction_filter * matrix[x_from:x_to, y_from:y_to])
-
-    return dim_reduction.flatten()
-
-
-def choose_images(images, cardinality=500):
-    """
-    Choose a random number of images.
-
-    This is currently flawed because it might
-    choose duplicates at the moment.
-    """
-    training_images = zeros((cardinality, 32 * 32))
-
-    for index in range(cardinality):
-        training_images[index] =\
-            dimensionality_reduction(choice(images))
-
-    return training_images
-
-
-def vector_to_image(vector, image_shape):
-    """Imagize a vector."""
-    im_dim = vector.reshape(image_shape)
-    image = zeros((image_shape[0], image_shape[1], 3))
-
-    kind_of_abs = lambda x: x if x > 0 else 255
-    for xi, row in enumerate(im_dim):
-        for yi, cell in enumerate(row):
-            image[xi, yi] = [kind_of_abs(im_dim[xi, yi]) / 256] * 3
-
-    return image
 
 
 class Eigenclassifier(object):
@@ -99,28 +26,12 @@ class Eigenclassifier(object):
 
         """Used in classification."""
         self.face_space = None
+        self.faces = None
         self.maximal_allowed_distance = 0
-
-    def displayable_vector(self, vector):
-        """Shapes vector into displayable format."""
-        mn = min(vector)
-        mx = max(vector)
-
-        stabiliser = mx + abs(mn)
-
-        avoid_zero_division = stabiliser if stabiliser != 0 else 1
-
-        vector = vector + abs(mn)
-        return vector * (256 / avoid_zero_division)
 
     def project_on_space(self, vector):
         """Project the vector onto the space.
 
-        Calculate expected face value
-        """
-        vector = vector - self.mean_face
-
-        """
         Project the face onto the new base by summation of
         projection onto each of the base vectors
         """
@@ -135,7 +46,7 @@ class Eigenclassifier(object):
 
     def euclidian_distance(self, v1, v2):
         """Calculate the euclidian distance of two vectors."""
-        return sqrt(sum((v1 - v2) * (v1 - v2)))
+        return sqrt((v1 - v2) @ (v1 - v2))
 
     def show_principal_component(self, shape=(32, 32)):
         """Show the eigen face of the principal component."""
@@ -146,15 +57,15 @@ class Eigenclassifier(object):
 
         fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4)
 
-        principal_component_0 = self.displayable_vector(self.eigen_base_hd[0])
-        principal_component_1 = self.displayable_vector(self.eigen_base_hd[1])
-        principal_component_2 = self.displayable_vector(self.eigen_base_hd[2])
-        principal_component_3 = self.displayable_vector(self.eigen_base_hd[3])
+        principal_component_0 = image.normalize_vector_image(self.eigen_base_hd[0])
+        principal_component_1 = image.normalize_vector_image(self.eigen_base_hd[1])
+        principal_component_2 = image.normalize_vector_image(self.eigen_base_hd[2])
+        principal_component_3 = image.normalize_vector_image(self.eigen_base_hd[3])
 
-        ax1.imshow(vector_to_image(principal_component_0, shape))
-        ax2.imshow(vector_to_image(principal_component_1, shape))
-        ax3.imshow(vector_to_image(principal_component_2, shape))
-        ax4.imshow(vector_to_image(principal_component_3, shape))
+        ax1.imshow(image.vector_to_image(principal_component_0, shape))
+        ax2.imshow(image.vector_to_image(principal_component_1, shape))
+        ax3.imshow(image.vector_to_image(principal_component_2, shape))
+        ax4.imshow(image.vector_to_image(principal_component_3, shape))
 
         plt.tight_layout()
         plt.show()
@@ -274,7 +185,7 @@ class Eigenclassifier(object):
 
         return self.eigen_base_hd
 
-    def get_min_distance_to_faces(self, faces, training_faces):
+    def set_allowed_distance(self, faces, training_faces):
         """
         Define face space within the eigenbase of faces.
 
@@ -289,6 +200,9 @@ class Eigenclassifier(object):
 
         """Reset maximal_allowed distance."""
         self.maximal_allowed_distance = 0
+        # faces = faces - self.mean_face
+        # training_faces = training_faces - self.mean_face
+
 
         """
         Face space is defined as a minimal distance
@@ -297,6 +211,7 @@ class Eigenclassifier(object):
 
         Projects all faces onto the face space.
         """
+        self.faces = faces
         self.face_space = zeros((len(faces), self.base_dim))
         for index, face in enumerate(faces):
             self.face_space[index] = self.project_on_space(face)
@@ -311,17 +226,34 @@ class Eigenclassifier(object):
         nearest face so that all the faces in the training_faces
         is classified as a face.
         """
-        for training_face in _training_faces:
+
+        most_distant_faces = 0
+        mdf1 = None
+        mdf2 = None
+        for it, training_face in enumerate(_training_faces):
             minimal_distance_to_a_face = INT_MAX
-            for face in self.face_space:
+
+            closest_face = INT_MAX
+            cf = None
+
+            for ir, face in enumerate(self.face_space):
                 minimal_distance_to_a_face =\
                     min(minimal_distance_to_a_face,
                         self.euclidian_distance(training_face, face))
 
+                if closest_face > minimal_distance_to_a_face:
+                    closest_face = minimal_distance_to_a_face
+                    cf = self.faces[ir]
+
             self.maximal_allowed_distance =\
                 max(self.maximal_allowed_distance, minimal_distance_to_a_face)
 
-        return self.maximal_allowed_distance
+            if most_distant_faces < self.maximal_allowed_distance:
+                most_distant_faces = self.maximal_allowed_distance
+                mdf1 = training_faces[it]
+                mdf2 = cf
+
+        return self.maximal_allowed_distance, mdf1, mdf2
 
     def predict(self, image):
         """
@@ -336,31 +268,37 @@ class Eigenclassifier(object):
             sys.exit(0)
 
         """Project the image onto the face space"""
+        # image = image - self.mean_face
         _i_in_facespace = self.project_on_space(image)
 
+        closest_face = None
+        previous_md = INT_MAX
         min_distance_to_face = INT_MAX
-        for face in self.face_space:
+        for index, face in enumerate(self.face_space):
             min_distance_to_face =\
                 min(min_distance_to_face,
                     self.euclidian_distance(face, _i_in_facespace))
 
-        return (True, min_distance_to_face) if\
+            if previous_md > min_distance_to_face:
+                previous_md = min_distance_to_face
+                closest_face = self.faces[index]
+
+        return (True, min_distance_to_face, closest_face) if\
             min_distance_to_face <= self.maximal_allowed_distance else\
-            (False, min_distance_to_face)
+            (False, min_distance_to_face, closest_face)
 
 
 if __name__ == "__main__":
 
-    time_stamp_pre_datafetch = time()
+    pre_fetch = time()
 
-    (base_data, training_data, test_data) =\
-        get_training_test_and_real_test_data()
+    (base_data, training_data, test_data) = data.get_data()
 
     print("took {} seconds to read data"
-          .format(time() - time_stamp_pre_datafetch))
+          .format(time() - pre_fetch))
 
     classifier = Eigenclassifier(base_dim=4, orthogonalize=True)
     classifier.build_base(base_data)
-    classifier.get_min_distance_to_faces(base_data, training_data)
+    classifier.set_allowed_distance(base_data, training_data)
     classifier.show_principal_component()
 
