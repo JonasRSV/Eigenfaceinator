@@ -11,7 +11,7 @@ https://www.kaggle.com/c/facial-keypoints-detection/data DOWLOAD Training Data h
 
 Hmmm This method did not seem to be well suited to recognize face, rather it just learns to recognize color ish.
 
-[Imgur](https://i.imgur.com/5XwPb6i.jpg)
+![Imgur](https://i.imgur.com/5XwPb6i.jpg)
 
 
 My quest for ultimate recoginition continues!
